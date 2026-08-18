@@ -1,0 +1,27 @@
+# Power Platform / PAC CLI
+.pac/
+bin/
+obj/
+*.zip
+*.msapp
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.secret.json
+client-secret*
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Exports
+/out/

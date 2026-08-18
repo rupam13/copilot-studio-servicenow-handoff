@@ -1,0 +1,90 @@
+# Pattern 1: DEFLECT
+# Answer from ServiceNow Knowledge and log the deflection.
+# Deflection is the only ITSM metric that compounds, so it is measured
+# explicitly rather than inferred from "tickets not created".
+
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent:
+    triggerQueries:
+      - my laptop is slow
+      - I cannot access the VPN
+      - how do I reset my password
+      - printer not working
+
+  actions:
+    - kind: SetVariable
+      id: initAttempts
+      variable: Global.DeflectionAttempts
+      value: =Coalesce(Global.DeflectionAttempts, 0)
+
+    # ---- Grounded answer over ServiceNow Knowledge ------------------------
+    - kind: SearchAndSummarizeContent
+      id: answerFromKb
+      userInput: =System.Activity.Text
+      variable: Topic.KbAnswer
+      additionalInstructions: |
+        Answer only from the ServiceNow knowledge base.
+        Always cite the KB article number in the form KBxxxxxxx.
+        If the articles do not contain the answer, say so plainly.
+        Never invent a KB number.
+      moderationLevel: High
+
+    # ---- Track which articles were shown ---------------------------------
+    # This is what stops the human agent re-sending an article the user
+    # has already read and rejected.
+    - kind: SetVariable
+      id: trackKb
+      variable: Global.AttemptedKbArticles
+      value: =Concatenate(Coalesce(Global.AttemptedKbArticles, ""), Topic.KbCitations, ";")
+
+    - kind: Question
+      id: didThatHelp
+      variable: Topic.Resolved
+      prompt: "Did that resolve your issue?"
+      entity: BooleanPrebuiltEntity
+
+    - kind: ConditionGroup
+      id: routeOnOutcome
+      conditions:
+        # ---- Deflected: log it and close --------------------------------
+        - id: resolved
+          condition: =Topic.Resolved
+          actions:
+            - kind: InvokeFlowAction
+              id: logDeflection
+              flowId: <FLOW_ID_LOG_DEFLECTION>
+              inputs:
+                ConversationId: =System.Conversation.Id
+                Caller: =System.User.PrincipalName
+                Intent: =System.Activity.Text
+                KbArticles: =Global.AttemptedKbArticles
+                Outcome: "Deflected"
+
+            - kind: SendActivity
+              id: closeOut
+              activity: "Glad that helped. Nothing further needed — no ticket raised."
+
+      # ---- Not resolved: increment and decide -----------------------------
+      elseActions:
+        - kind: SetVariable
+          id: incrementAttempts
+          variable: Global.DeflectionAttempts
+          value: =Global.DeflectionAttempts + 1
+
+        - kind: ConditionGroup
+          id: escalateOrRetry
+          conditions:
+            - id: exhausted
+              condition: =Global.DeflectionAttempts >= Value(Env.MaxDeflectionAttempts)
+              actions:
+                - kind: BeginDialog
+                  id: goToEscalation
+                  dialog: EscalateToLiveAgent
+
+          elseActions:
+            - kind: SendActivity
+              id: retryPrompt
+              activity: "Let me try a different angle. Can you tell me what you've already tried?"

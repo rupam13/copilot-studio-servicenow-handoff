@@ -1,0 +1,81 @@
+# Pattern 2/3 support: create the ServiceNow incident WITH full context.
+# Called by EscalateToLiveAgent, or directly when the user explicitly
+# asks to raise a ticket.
+
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnRecognizedIntent
+  id: main
+  intent:
+    triggerQueries:
+      - raise a ticket
+      - create an incident
+      - log this with IT
+      - I need to report a problem
+
+  actions:
+    # ---- Caller is resolved server-side, NEVER from user input -----------
+    # If caller_id came from anything the user typed, any user could raise
+    # a ticket as anyone else.
+    - kind: SetVariable
+      id: setCaller
+      variable: Topic.CallerUpn
+      value: =System.User.PrincipalName
+
+    - kind: Question
+      id: askImpact
+      variable: Topic.Impact
+      prompt: "Is this affecting just you, your team, or the whole site?"
+      entity: StringPrebuiltEntity
+
+    # ---- Deterministic severity mapping ---------------------------------
+    # Priority drives SLA and on-call paging. Never a model decision.
+    - kind: SetVariable
+      id: mapImpact
+      variable: Topic.ImpactCode
+      value: |
+        =Switch(Lower(Topic.Impact),
+          "whole site", 1,
+          "site", 1,
+          "team", 2,
+          3)
+
+    - kind: SetVariable
+      id: mapUrgency
+      variable: Topic.UrgencyCode
+      value: =If(Global.DeflectionAttempts >= 2, 2, 3)
+
+    # ---- Agent-generated summary for triage -----------------------------
+    - kind: SetVariable
+      id: buildSummary
+      variable: Topic.ShortDescription
+      value: =Left(Concatenate("[Copilot] ", System.Activity.Text), 160)
+
+    # ---- Create the incident --------------------------------------------
+    - kind: InvokeFlowAction
+      id: createIncident
+      flowId: <FLOW_ID_CREATE_INCIDENT>
+      inputs:
+        CallerUpn: =Topic.CallerUpn
+        ShortDescription: =Topic.ShortDescription
+        Description: =Global.TranscriptText
+        Impact: =Topic.ImpactCode
+        Urgency: =Topic.UrgencyCode
+        ContactType: "virtual_agent"
+        ConversationId: =System.Conversation.Id
+        AttemptedKbArticles: =Global.AttemptedKbArticles
+        DeflectionAttempts: =Global.DeflectionAttempts
+      output:
+        binding:
+          IncidentNumber: number
+          IncidentSysId: sys_id
+
+    - kind: SendActivity
+      id: confirmTicket
+      activity: |
+        Raised **{Topic.IncidentNumber}** for you.
+        I've attached our full conversation and the articles we already tried,
+        so you won't need to repeat yourself.
+
+    - kind: EndDialog
+      id: done

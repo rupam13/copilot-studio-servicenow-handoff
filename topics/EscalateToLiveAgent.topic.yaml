@@ -1,0 +1,45 @@
+# Pattern 3: HAND OFF
+# Transfer to a human with the conversation intact.
+# The transcript is written to the incident BEFORE transfer, so the
+# human agent has context the moment the chat lands in their queue.
+
+kind: AdaptiveDialog
+beginDialog:
+  kind: OnBeginDialog
+  id: main
+  actions:
+    - kind: SendActivity
+      id: setExpectation
+      activity: "I haven't been able to resolve this. Let me get a person involved."
+
+    # ---- Build the transcript BEFORE transferring -------------------------
+    # Truncated to the most recent turns: connector payload is capped at
+    # 5 MB on public cloud but only 450 KB on GCC.
+    - kind: SetVariable
+      id: buildTranscript
+      variable: Global.TranscriptText
+      value: |
+        =Concat(
+          LastN(System.Conversation.History, Value(Env.TranscriptMaxTurns)),
+          Concatenate(Role, ": ", Text, Char(10))
+        )
+
+    # ---- Create the incident with full context ---------------------------
+    - kind: BeginDialog
+      id: createTicketFirst
+      dialog: CreateIncident
+
+    # ---- Only now transfer --------------------------------------------
+    # Order matters: if transfer happened first and ticket creation then
+    # failed, the human agent would receive a context-free conversation.
+    - kind: TransferConversation
+      id: transfer
+      additionalContext:
+        incidentNumber: =Topic.IncidentNumber
+        conversationId: =System.Conversation.Id
+        attemptedKb: =Global.AttemptedKbArticles
+        deflectionAttempts: =Global.DeflectionAttempts
+        callerUpn: =System.User.PrincipalName
+
+    - kind: EndDialog
+      id: done
